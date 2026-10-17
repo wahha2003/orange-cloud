@@ -1,0 +1,81 @@
+name: Build iOS (Open Source Unlocked)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/ios/**"
+      - ".github/workflows/build-ios.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    env:
+      PROJECT: apps/ios/Orange Cloud/Orange Cloud.xcodeproj
+      SCHEME: Orange Cloud
+      IPA_PATH: ${{ github.workspace }}/OrangeCloud-unsigned.ipa
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.0"
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -resolvePackageDependencies
+
+      - name: Build unsigned app
+        run: |
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS=OPENSOURCE_UNLOCKED \
+            clean build
+
+      - name: Package unsigned IPA
+        run: |
+          app="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/Orange Cloud.app"
+          test -d "$app"
+
+          package_dir="$RUNNER_TEMP/ipa"
+          mkdir -p "$package_dir/Payload"
+          ditto "$app" "$package_dir/Payload/Orange Cloud.app"
+
+          cd "$package_dir"
+          zip -qry "$IPA_PATH" Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeCloud-unsigned-${{ github.run_number }}
+          path: ${{ env.IPA_PATH }}
+          if-no-files-found: error
+          retention-days: 14
